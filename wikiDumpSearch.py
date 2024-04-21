@@ -149,7 +149,6 @@ class offline_Wiki():
         
         if not wikiDump :
             wikiDump = self.wikiDump_bz2_file
-
         
         # wiki_bz2_file_size = os.path.getsize(wikiDump)
         
@@ -213,7 +212,7 @@ class offline_Wiki():
             res = pickle.load(f)
         return res
     
-    # ----- SIMILARITY FINDING FUNCTIONS | STARTS -----
+    ### ----- SIMILARITY FINDING FUNCTIONS | STARTS -----
 
     def search_closest_words(self, keywords, word):
         word_lower = word.lower()  # Convert search word to lowercase
@@ -267,8 +266,16 @@ class offline_Wiki():
         intersection_weight = len(set1.intersection(set2))
         union_weight = len(set1.union(set2))
         return intersection_weight / union_weight if union_weight != 0 else 0
+        
+    def is_fuzz_similar(self, string1, string2, threshold = 80, verbose = False):
+        ratioo = fuzz.ratio(string1, string2)
+        if verbose:
+            print(f"Fuzzy similarity between {string1} and {string2} is {ratioo}")
+        if ratioo >= threshold:
+            return True 
+        return False 
 
-    # ----- SIMILARITY FINDING FUNCTIONS | ENDS -----
+    ### ----- SIMILARITY FINDING FUNCTIONS | ENDS -----
 
     def find_similar_keys(self, word, dictionary, threshold=0.5, verbose=False):
         similar_keys = []
@@ -342,6 +349,11 @@ class offline_Wiki():
         return cleaned_text, links
 
     def extract_cleaned_page(self, page_soup, summaryOnly = False, verbose = False, wantLinks = False, wikibaseurl = "https://en.wikipedia.org/wiki/"):
+        """
+        RETURNS THE PAGE TITLE, URL, AND PAGE CONTENT
+        YOU MAY WANT TO CHANGE THIS ACCORDING IT YOUR NEED
+        
+        """
         page_title = page_soup.find("title").text
         page_body = page_soup.find("text").text
         page_redirect = page_soup.find("redirect") 
@@ -354,16 +366,7 @@ class offline_Wiki():
             
         page_body, _ = self.page_cleaner(page_body, 
                                     summaryOnly=summaryOnly)
-        # page_body = clean_markup(page_body)
-        
-        # if page_redirect:
-        #     if _ :
-        #         # page_url = wikibaseurl+_[0]['link'].replace(' ', '_')
-        #         pass
-        #     else:
-        #         print(f"{page_title}, {page_body}, {_}")
-        #         input()
-
+    
         if verbose:
             print(f"Page cleaning done... \nGot Title : {page_title}, \nCleaned page body : {page_body} \nPage url : {page_url}, {'and Links : {_}'*wantLinks}\n")
         
@@ -393,14 +396,6 @@ class offline_Wiki():
                 print(f"FOUND : {len(pages)} PAGES BETWEEN {start_byte} BYTE AND {end_byte} BYTE.")
             
         return pages 
-
-    def is_fuzz_similar(self, string1, string2, threshold = 80, verbose = False):
-        ratioo = fuzz.ratio(string1, string2)
-        if verbose:
-            print(f"Fuzzy similarity between {string1} and {string2} is {ratioo}")
-        if ratioo >= threshold:
-            return True 
-        return False 
     
     def word_match(self, word, verbose = False, summaryOnly = True):
         near_words = self.search_closest_words(self.index_keys, word)
@@ -416,6 +411,11 @@ class offline_Wiki():
         if verbose:
             print(f"Similar keywords found in Wiki : {similar_keywords}")
         
+        if not similar_keywords:
+            if verbose:
+                print("No similar keyword found !!!")
+            return None
+  
         wanted = self.fetch_word_from_list(word, similar_keywords)
         
         if not wanted:
@@ -434,11 +434,14 @@ class offline_Wiki():
             # print(page_xml)
             _page_title,_page_url, _page_summary = "", "", ""
             _page_title, _page_url, _page_summary = self.extract_cleaned_page(page_xml, summaryOnly=summaryOnly, verbose=verbose)
-            if self.is_fuzz_similar(wanted, _page_title, verbose=verbose): 
+            if self.is_fuzz_similar(wanted, _page_title, threshold=90,verbose=verbose): 
                 # offline_dict[_page_title] = {'title' : _page_title, 
                 #                             'url' : _page_url, 
                 #                             'summary' : _page_summary}
                 return {'title' : _page_title, 
                         'url' : _page_url, 
                         'summary' : _page_summary}
+        return None
+        
+                
 
