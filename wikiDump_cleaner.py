@@ -59,7 +59,7 @@ class Cleaner(object):
                 begin = pattern_end
             else:
                 removed += text[begin]
-                begin += 1
+                begin = max(begin+1, pattern_end)
             pattern_begin = text.find(pattern, begin)
             if pattern_begin == -1:
                 break
@@ -75,7 +75,7 @@ class Cleaner(object):
         """Remove patterns like <ref*>*</ref>"""
         text = re.sub(r'<ref[^/]*?/>', '', text, flags=re.IGNORECASE | re.DOTALL)
         text = re.sub(r'<ref.*?</ref>', '', text, flags=re.IGNORECASE | re.DOTALL)
-        # text = re.sub(r'{{Refbegin.*?Refend}}', '', text, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(r'{{Refbegin.*?Refend}}', '', text, flags=re.IGNORECASE | re.DOTALL)
         return text
 
     def _remove_emphasises(self, text):

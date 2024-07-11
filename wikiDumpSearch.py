@@ -1,12 +1,11 @@
 # IMPORTING
 from wikiDump_cleaner import Cleaner
-import bz2, os, re, json, pickle
+import bz2, os, re, sys, json, pickle
 from bs4 import BeautifulSoup
 from fuzzywuzzy import fuzz
 from tqdm import tqdm
 from difflib import SequenceMatcher
 # from joblib import Parallel, delayed 
-
 
 class offline_Wiki():
     def __init__(self, 
@@ -25,7 +24,7 @@ class offline_Wiki():
         self.index_keys = []
         self.index_folder = index_folder
 
-        if self.index_folder:
+        if self.index_folder and os.path.exists(self.index_folder):
             self.files_index = os.listdir(index_folder)
             self.index_keys = sorted([".".join(os.path.basename(i).split(".")[:-1]).split("_")[1] for i in self.files_index], key=lambda x: x.lower())
 
@@ -49,7 +48,7 @@ class offline_Wiki():
             index_file = f.readlines()
         
         if verbose:
-            start_bytes = [int(x.split(":")[0]) for x in tqdm(index_file)] # <--- SIMPLY USING A for LOOP IS VERY VERY FAST (7 SEC)
+            start_bytes = [int(x.split(":")[0]) for x in tqdm(index_file, desc="start byte data")] # <--- SIMPLY USING A for LOOP IS VERY VERY FAST (7 SEC)
             # start_bytes = Parallel(n_jobs=N_JOB_COUNT)(delayed(get_start_bytes_list_helper)(x) for x in tqdm(index_file)) # <--- USING Parallel FINISHES IN >3 MINS 😮
         else:
             start_bytes = [int(x.split(":")[0]) for x in index_file]
@@ -108,8 +107,7 @@ class offline_Wiki():
         with open(filename, "wb") as f:
             pickle.dump(dataa, f)
 
-    def store_dictionary_in_bins(self, word_dictionary, binsize=10000, 
-                                index_folder ="./indexes/", verbose = False):
+    def store_dictionary_in_bins(self, word_dictionary, binsize=10000, index_folder ="./indexes/", verbose = False):
         if not os.path.exists(index_folder):
             os.makedirs(index_folder)
 
@@ -125,8 +123,9 @@ class offline_Wiki():
 
             first_key = bin_keys[0]
             filename = f"index_{self.clean_filename(first_key).strip()}.p"
+
             # Check if the cleaned filename is less than 3 characters
-            if len(filename) < 8+2 and i > 0:
+            if len(filename) < 8 + 2 and i > 0:     # len("index_") = 6, len(".p") = 2 => 6+2 = 8
                 # Try using the second key in bin_keys as the filename
                 # if len(bin_keys) > 1:
                 #     second_key = bin_keys[1]
@@ -143,7 +142,7 @@ class offline_Wiki():
             if verbose:
                 print(f"Stored {len(bin_data)} elements in {filename}")
 
-    def index_maker(self, index_file, wikiDump, index_folder = "./indexes/", verbose = False):
+    def index_maker(self, index_file, wikiDump, index_folder = "./indexes/", binsize = 20000, verbose = False):
         if not index_file:
             index_file = self.wiki_index_file
         
@@ -194,8 +193,8 @@ class offline_Wiki():
         index_file.clear() # EMPTYING MEMEORY
 
         if verbose:
-            print("Making bins")
-        self.store_dictionary_in_bins(word_start_end_dict, binsize=20000, index_folder=index_folder) # STORING IN BINS
+            print(f"Making bins with binsize = {binsize}")
+        self.store_dictionary_in_bins(word_start_end_dict, binsize=binsize, index_folder=index_folder) # STORING IN BINS
         
         if verbose:
             print("Bins made")
@@ -354,6 +353,8 @@ class offline_Wiki():
         YOU MAY WANT TO CHANGE THIS ACCORDING IT YOUR NEED
         
         """
+        # print(page_soup.find("title"))
+        # input()
         page_title = page_soup.find("title").text
         page_body = page_soup.find("text").text
         page_redirect = page_soup.find("redirect") 
@@ -381,13 +382,119 @@ class offline_Wiki():
         soup = BeautifulSoup(page_xml, "lxml")
         pages = soup.find_all("page")
         return pages
+    
+    # def retrieve_text(self, title, offset):
+    def decompress_xml2(self, title, offset):
 
+        '''
+        TAKEN FROM : "https://gerrit.wikimedia.org/r/plugins/gitiles/operations/dumps/+/ariel/toys/bz2multistream/wikiarticles.py"
+
+        retrieve the page text for a given title from the xml file
+        this does decompression of a bz2 stream so it's more expsive than
+        other parts of this class
+        arguments:
+        title  -- the page title, with spaces and not underscores, case sensitive
+        offset -- the offset in bytes to the bz2 stream in the xml file which contains
+                  the page text
+        returns the page text or None if no such page was found
+        '''
+        # self.xml_fd.seek(offset)
+        with open(self.wikiDump_bz2_file, "rb") as f:
+            f.seek(offset)
+
+            unzipper = bz2.BZ2Decompressor()
+            out = None
+            found = False
+            try:
+                # block = self.xml_fd.read(262144)
+                block = f.read(262144)
+
+                out = unzipper.decompress(block).decode()
+            # hope we got enough back to have the page text
+            except:
+                raise
+            # format of the contents (and there are multiple pages per stream):
+            #   <page>
+            #   <title>AccessibleComputing</title>
+            #   <ns>0</ns>
+            #   <id>10</id>
+            # ...
+            #   </page>
+            title_regex = re.compile(r"<page>(\s*)<title>%s(\s*)</title>" % re.escape(title))
+            while not found:
+                match = title_regex.search(out)
+                if match:
+                    found = True
+                    text = out[match.start():]
+                    if self.verbose:
+                        sys.stderr.write("Found page title, first 600 characters: %s\n" % text[:600])
+                    break
+                # we could have a part of the regex at the end of the string, so...
+                if len(out) > 40 + len(title):  # length of the above plus extra whitespace
+                    out = out[-1 * (40 + len(title)):]
+                try:
+                    # block = self.xml_fd.read(262144)
+                    block = f.read(262144)
+
+                except:
+                    # reached end of file (normal case) or
+                    # something really broken (other cases)
+                    break
+                try:
+                    out = out + unzipper.decompress(block).decode()
+                except EOFError:
+                    # reached end of bz2 stream
+                    # EOFError  means we have some data after end of stream, don't care
+                    pass
+            if not found:
+                return None
+            out = text
+            found = False
+            text = ""
+            while not found:
+                ind = out.find("</page>")
+                if ind != -1:
+                    found = True
+                    if self.verbose:
+                        sys.stderr.write("Found end page tag\n")
+                    text = text + out[:ind + len("</page>")]
+                    break
+                # we could have part of the end page tag at the end of the string
+                text = text + out[:-1 * len("</page>") - 1]
+                out = out[-1 * len("</page>"):]
+                try:
+                    # block = self.xml_fd.read(262144)
+                    block = f.read(262144)
+
+                except:
+                    # reached end of file (normal case) or
+                    # something really broken (other cases)
+                    break
+                try:
+                    out = out + unzipper.decompress(block).decode()
+                except EOFError:
+                    # reached end of bz2 stream
+                    # EOFError  means we have some data after end of stream, don't care
+                    pass
+            # if not found this can be partial text. should we return it? no
+            if not found:
+                if self.verbose:
+                    sys.stderr.write("Found partial text but no end page tag. Text follows:\n")
+                    sys.stderr.write(text)
+                    sys.stderr.write("\n")
+                text = None
+            return text
 
     def decompress_xml(self, bz2_wiki_dump_path, start_byte, end_byte, verbose = False):
         decomp = bz2.BZ2Decompressor()
         with open(bz2_wiki_dump_path, 'rb') as f:
             f.seek(start_byte)
-            readback = f.read(end_byte - start_byte - 1)
+            block_size = end_byte - start_byte - 1
+            print(block_size)
+            input()
+            # readback = f.read(end_byte - start_byte - 1)
+            readback = f.read(max(256*1024, block_size) + 256*1024)
+
             page_xml = decomp.decompress(readback).decode()
 
             pages = self.extract_pages(page_xml)
@@ -429,7 +536,14 @@ class offline_Wiki():
         if verbose:
             print(f"Byte start : {_start}, Byte end : {_end}")
         
-        decompressed_pages = self.decompress_xml(self.wikiDump_bz2_file, _start, _end)
+        # decompressed_pages = self.decompress_xml(self.wikiDump_bz2_file, _start, _end)
+        page_xml = self.decompress_xml2(wanted, _start)
+        decompressed_pages = BeautifulSoup(page_xml, "lxml").find_all("page")
+
+        # print(decompressed_pages)
+        # input()
+
+
         for page_xml in decompressed_pages:
             # print(page_xml)
             _page_title,_page_url, _page_summary = "", "", ""
@@ -442,6 +556,3 @@ class offline_Wiki():
                         'url' : _page_url, 
                         'summary' : _page_summary}
         return None
-        
-                
-
