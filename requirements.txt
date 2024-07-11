@@ -1,0 +1,5 @@
+wikipedia
+fuzzywuzzy
+beautifulsoup4
+tqdm
+joblib
